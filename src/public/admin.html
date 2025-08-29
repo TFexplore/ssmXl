@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员后台</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            padding-top: 20px;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin-bottom: 20px;
+        }
+        .form-section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .form-section:last-child {
+            border-bottom: none;
+        }
+        textarea {
+            min-height: 100px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2 class="text-center mb-4">短信验证码中转系统 - 管理后台</h2>
+
+        <!-- 系统配置 -->
+        <div class="form-section">
+            <h3>系统配置</h3>
+            <div class="mb-3">
+                <label for="targetUrlInput" class="form-label">监控目标URL (targetUrl)</label>
+                <input type="url" class="form-control" id="targetUrlInput" placeholder="请输入监控URL">
+            </div>
+            <div class="mb-3">
+                <label for="announcementInput" class="form-label">用户页面公告 (announcement)</label>
+                <textarea class="form-control" id="announcementInput" rows="3" placeholder="请输入用户页面显示的公告信息"></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="cooldownPeriodInput" class="form-label">冷却时间 (小时)</label>
+                <input type="number" class="form-control" id="cooldownPeriodInput" placeholder="例如: 24" value="24">
+            </div>
+            <div class="mb-3">
+                <label for="validityPeriodInput" class="form-label">链接有效期 (分钟)</label>
+                <input type="number" class="form-control" id="validityPeriodInput" placeholder="例如: 10" value="10">
+            </div>
+            <div class="mb-3">
+                <label for="cyclePeriodInput" class="form-label">号码使用周期 (小时)</label>
+                <input type="number" class="form-control" id="cyclePeriodInput" placeholder="例如: 120" value="120">
+            </div>
+            <button id="saveConfigBtn" class="btn btn-primary">保存配置</button>
+            <div id="configMessage" class="mt-2"></div>
+        </div>
+
+        <!-- 号码导入 -->
+        <div class="form-section">
+            <h3>导入COM口与电话号码映射</h3>
+            <div class="mb-3">
+                <label for="mappingsInput" class="form-label">COM口与电话号码 (每行一对，格式: COM1,13800138000)</label>
+                <textarea class="form-control" id="mappingsInput" rows="5" placeholder="COM1,13800138000&#10;COM2,13912345678"></textarea>
+            </div>
+            <button id="importMappingsBtn" class="btn btn-primary">导入号码</button>
+            <div id="mappingsMessage" class="mt-2"></div>
+        </div>
+
+        <!-- 链接生成 -->
+        <div class="form-section">
+            <h3>生成访问链接</h3>
+            <p>系统将自动选择一个不在冷却期内的号码生成链接。</p>
+            <button id="generateLinkBtn" class="btn btn-success">生成链接</button>
+            <div id="linkMessage" class="mt-2"></div>
+            <div id="generatedLink" class="mt-3">
+                <label class="form-label">生成的链接:</label>
+                <input type="text" class="form-control" id="linkOutput" readonly>
+                <button class="btn btn-secondary btn-sm mt-2" onclick="copyLink()">复制链接</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const targetUrlInput = document.getElementById('targetUrlInput');
+            const announcementInput = document.getElementById('announcementInput');
+            const cooldownPeriodInput = document.getElementById('cooldownPeriodInput');
+            const validityPeriodInput = document.getElementById('validityPeriodInput');
+            const cyclePeriodInput = document.getElementById('cyclePeriodInput');
+            const saveConfigBtn = document.getElementById('saveConfigBtn');
+            const configMessage = document.getElementById('configMessage');
+
+            const mappingsInput = document.getElementById('mappingsInput');
+            const importMappingsBtn = document.getElementById('importMappingsBtn');
+            const mappingsMessage = document.getElementById('mappingsMessage');
+
+            const generateLinkBtn = document.getElementById('generateLinkBtn');
+            const linkOutput = document.getElementById('linkOutput');
+            const linkMessage = document.getElementById('linkMessage');
+
+            // Load initial config
+            async function loadConfig() {
+                try {
+                    const response = await fetch('/api/admin/config/all'); // Assuming an API to get all configs
+                    if (response.ok) {
+                        const configs = await response.json();
+                        configs.forEach(config => {
+                            if (config.config_key === 'targetUrl') {
+                                targetUrlInput.value = config.config_value;
+                            } else if (config.config_key === 'announcement') {
+                                announcementInput.value = config.config_value;
+                            }
+                        });
+                    }
+                } catch (error) {
+                    console.error('Error loading config:', error);
+                }
+            }
+            // We need to add an API endpoint to get all configs first.
+            // For now, we'll just assume default values or empty.
+            // loadConfig(); // Temporarily comment out until /api/admin/config/all is implemented
+
+            saveConfigBtn.addEventListener('click', async () => {
+                configMessage.innerHTML = '';
+                try {
+                    // Save targetUrl
+                    let response = await fetch('/api/admin/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'targetUrl', value: targetUrlInput.value })
+                    });
+                    let data = await response.json();
+                    if (!response.ok) throw new Error(data.message || '保存 targetUrl 失败');
+
+                    // Save announcement
+                    response = await fetch('/api/admin/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'announcement', value: announcementInput.value })
+                    });
+                    data = await response.json();
+                    if (!response.ok) throw new Error(data.message || '保存公告失败');
+
+                    // Save cooldownPeriod
+                    response = await fetch('/api/admin/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'cooldownPeriod', value: cooldownPeriodInput.value })
+                    });
+                    data = await response.json();
+                    if (!response.ok) throw new Error(data.message || '保存冷却时间失败');
+
+                    // Save validityPeriod
+                    response = await fetch('/api/admin/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'validityPeriod', value: validityPeriodInput.value })
+                    });
+                    data = await response.json();
+                    if (!response.ok) throw new Error(data.message || '保存链接有效期失败');
+
+                    // Save cyclePeriod
+                    response = await fetch('/api/admin/config', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ key: 'cyclePeriod', value: cyclePeriodInput.value })
+                    });
+                    data = await response.json();
+                    if (!response.ok) throw new Error(data.message || '保存号码使用周期失败');
+
+                    configMessage.className = 'mt-2 alert alert-success';
+                    configMessage.innerText = '配置保存成功！';
+                } catch (error) {
+                    configMessage.className = 'mt-2 alert alert-danger';
+                    configMessage.innerText = error.message;
+                }
+            });
+
+            importMappingsBtn.addEventListener('click', async () => {
+                mappingsMessage.innerHTML = '';
+                const rawMappings = mappingsInput.value.trim();
+                if (!rawMappings) {
+                    mappingsMessage.className = 'mt-2 alert alert-warning';
+                    mappingsMessage.innerText = '请输入要导入的映射数据。';
+                    return;
+                }
+
+                const mappings = rawMappings.split('\n').map(line => {
+                    const parts = line.split(',');
+                    if (parts.length === 2) {
+                        return { com_port: parts[0].trim(), phone_number: parts[1].trim() };
+                    }
+                    return null;
+                }).filter(m => m !== null);
+
+                if (mappings.length === 0) {
+                    mappingsMessage.className = 'mt-2 alert alert-warning';
+                    mappingsMessage.innerText = '没有有效的映射数据被解析。请检查格式。';
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/api/admin/mappings/import', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(mappings)
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        mappingsMessage.className = 'mt-2 alert alert-success';
+                        mappingsMessage.innerText = data.message;
+                    } else {
+                        throw new Error(data.message || '导入号码失败');
+                    }
+                } catch (error) {
+                    mappingsMessage.className = 'mt-2 alert alert-danger';
+                    mappingsMessage.innerText = error.message;
+                }
+            });
+
+            generateLinkBtn.addEventListener('click', async () => {
+                linkMessage.innerHTML = '';
+                linkOutput.value = '';
+                try {
+                    const response = await fetch('/api/admin/links', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await response.json();
+                    if (response.ok) {
+                        linkMessage.className = 'mt-2 alert alert-success';
+                        linkMessage.innerText = '链接生成成功！';
+                        linkOutput.value = data.link;
+                    } else {
+                        throw new Error(data.message || '生成链接失败');
+                    }
+                } catch (error) {
+                    linkMessage.className = 'mt-2 alert alert-danger';
+                    linkMessage.innerText = error.message;
+                }
+            });
+
+            window.copyLink = () => {
+                linkOutput.select();
+                document.execCommand('copy');
+                alert('链接已复制到剪贴板！');
+            };
+
+            // Initial load of configs when admin page loads
+            async function fetchAndDisplayConfigs() {
+                try {
+                    const response = await fetch('/api/admin/configs'); // New endpoint to get all configs
+                    if (response.ok) {
+                        const configs = await response.json();
+                        configs.forEach(config => {
+                            if (config.config_key === 'targetUrl') {
+                                targetUrlInput.value = config.config_value;
+                            } else if (config.config_key === 'announcement') {
+                                announcementInput.value = config.config_value;
+                            } else if (config.config_key === 'cooldownPeriod') {
+                                cooldownPeriodInput.value = config.config_value;
+                            } else if (config.config_key === 'validityPeriod') {
+                                validityPeriodInput.value = config.config_value;
+                            } else if (config.config_key === 'cyclePeriod') {
+                                cyclePeriodInput.value = config.config_value;
+                            }
+                        });
+                    } else {
+                        console.error('Failed to fetch configs:', response.statusText);
+                    }
+                } catch (error) {
+                    console.error('Error fetching configs:', error);
+                }
+            }
+            fetchAndDisplayConfigs(); // Call this on page load
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>短信验证码</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .container {
+            background-color: #ffffff;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            max-width: 600px;
+            width: 100%;
+        }
+        .message-item {
+            background-color: #e9ecef;
+            border-left: 5px solid #007bff;
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            word-break: break-all;
+        }
+        .message-timestamp {
+            font-size: 0.8em;
+            color: #6c757d;
+            text-align: right;
+        }
+        .announcement {
+            background-color: #fff3cd;
+            border-color: #ffecb5;
+            color: #664d03;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .phone-display {
+            background-color: #e2f0ff;
+            border: 1px solid #b3d8ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .phone-number {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2 class="text-center mb-4">短信验证码获取</h2>
+        <div id="announcement" class="announcement" role="alert">
+            <!-- 公告信息将在此处加载 -->
+        </div>
+        <div id="phone-number-display" class="phone-display d-none">
+            <div>
+                您的专属号码: <span id="phone-number" class="phone-number"></span>
+            </div>
+            <button id="copy-phone-number" class="btn btn-outline-primary btn-sm">复制</button>
+        </div>
+        <div id="messages-container">
+            <p class="text-center text-muted" id="loading-message">正在加载短信...</p>
+            <!-- 短信将在此处加载 -->
+        </div>
+        <div id="error-message" class="alert alert-danger mt-3 d-none" role="alert">
+            <!-- 错误信息将在此处显示 -->
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const token = window.location.pathname.split('/').pop();
+            const messagesContainer = document.getElementById('messages-container');
+            const loadingMessage = document.getElementById('loading-message');
+            const errorMessage = document.getElementById('error-message');
+            const announcementDiv = document.getElementById('announcement');
+            const phoneNumberDisplay = document.getElementById('phone-number-display');
+            const phoneNumberSpan = document.getElementById('phone-number');
+            const copyPhoneNumberBtn = document.getElementById('copy-phone-number');
+
+            copyPhoneNumberBtn.addEventListener('click', async () => {
+                try {
+                    await navigator.clipboard.writeText(phoneNumberSpan.innerText);
+                    copyPhoneNumberBtn.innerText = '已复制!';
+                    setTimeout(() => {
+                        copyPhoneNumberBtn.innerText = '复制';
+                    }, 2000);
+                } catch (err) {
+                    console.error('复制失败:', err);
+                    alert('复制失败，请手动复制。');
+                }
+            });
+
+            async function fetchSmsMessages() {
+                try {
+                    const response = await fetch(`/get-sms/${token}`);
+                    const data = await response.json();
+
+                    if (response.ok || response.status === 202) { // Handle 200 OK and 202 Accepted
+                        loadingMessage.classList.add('d-none');
+                        announcementDiv.innerText = data.announcement || '欢迎使用短信验证码中转服务！';
+
+                        if (data.phoneNumber) {
+                            phoneNumberSpan.innerText = data.phoneNumber;
+                            phoneNumberDisplay.classList.remove('d-none');
+                        }
+
+                        if (data.messages && data.messages.length > 0) {
+                            messagesContainer.innerHTML = ''; // Clear loading message
+                            data.messages.forEach(msg => {
+                                const messageDiv = document.createElement('div');
+                                messageDiv.classList.add('message-item');
+                                messageDiv.innerHTML = `
+                                    <div>${msg.content}</div>
+                                    <div class="message-timestamp">${new Date(msg.original_timestamp).toLocaleString()}</div>
+                                `;
+                                messagesContainer.appendChild(messageDiv);
+                            });
+                            if (data.messages.length < 2) {
+                                const waitingP = document.createElement('p');
+                                waitingP.classList.add('text-center', 'text-muted', 'mt-3');
+                                waitingP.innerText = '正在等待更多短信...';
+                                messagesContainer.appendChild(waitingP);
+                                setTimeout(fetchSmsMessages, 3000); // Keep polling if waiting
+                            }
+                        } else {
+                            messagesContainer.innerHTML = '<p class="text-center text-muted">暂无短信，请稍候...</p>';
+                            setTimeout(fetchSmsMessages, 3000); // Keep polling if no messages yet
+                        }
+                    } else {
+                        errorMessage.classList.remove('d-none');
+                        errorMessage.innerText = data.message || '获取短信失败，链接可能无效或已过期。';
+                        loadingMessage.classList.add('d-none');
+                        messagesContainer.innerHTML = ''; // Clear messages
+                        phoneNumberDisplay.classList.add('d-none'); // Hide phone number on error
+                    }
+                } catch (error) {
+                    console.error('Error fetching SMS:', error);
+                    errorMessage.classList.remove('d-none');
+                    errorMessage.innerText = '网络错误或服务器无响应。';
+                    loadingMessage.classList.add('d-none');
+                    messagesContainer.innerHTML = ''; // Clear messages
+                    phoneNumberDisplay.classList.add('d-none'); // Hide phone number on error
+                }
+            }
+
+            if (token) {
+                fetchSmsMessages();
+            } else {
+                errorMessage.classList.remove('d-none');
+                errorMessage.innerText = '无效的访问链接。';
+                loadingMessage.classList.add('d-none');
+                phoneNumberDisplay.classList.add('d-none'); // Hide phone number on invalid link
+            }
+        });
+    </script>
+</body>
+</html>
