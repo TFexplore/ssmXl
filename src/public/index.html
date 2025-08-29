@@ -22,6 +22,20 @@
             max-width: 600px;
             width: 100%;
         }
+        @media (max-width: 768px) {
+            .container {
+                padding: 15px;
+                margin: 15px;
+            }
+            .phone-display {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            .phone-display button {
+                margin-top: 10px;
+                width: 100%;
+            }
+        }
         .message-item {
             background-color: #e9ecef;
             border-left: 5px solid #007bff;
@@ -63,7 +77,9 @@
 <body>
     <div class="container">
         <h2 class="text-center mb-4">短信验证码获取</h2>
+         <p class="text-center text-muted mt-3" style="color: red;">每10s自动刷新，请勿频繁刷新</p>
         <div id="announcement" class="announcement" role="alert">
+           
             <!-- 公告信息将在此处加载 -->
         </div>
         <div id="phone-number-display" class="phone-display d-none">

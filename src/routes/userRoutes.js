@@ -28,7 +28,7 @@ router.get('/get-sms/:token', (req, res) => {
             }
 
             const now = new Date();
-            const expiresAt = new Date(link.expires_at);
+            const expiresAt = new Date(link.expires_at); // 假设数据库存储的是本地时间，让 Date 对象自行解析
 
             if (link.status !== 'active' || now > expiresAt) {
                 // Update status to expired if it's past due
@@ -60,7 +60,10 @@ router.get('/get-sms/:token', (req, res) => {
 
                         if (messages.length === 2) {
                             const messageExpiryThreshold = new Date(now.getTime() - validityPeriod * 60 * 1000); // Use configured validityPeriod
-                            const allMessagesExpired = messages.every(msg => new Date(msg.original_timestamp) < messageExpiryThreshold);
+                            const allMessagesExpired = messages.every(msg => {
+                                const originalTimestamp = new Date(msg.original_timestamp); // 假设数据库存储的是本地时间，让 Date 对象自行解析
+                                return originalTimestamp < messageExpiryThreshold;
+                            });
 
                             if (allMessagesExpired) {
                                 // 如果两条消息都已过期，则将链接状态设置为 'expired'
@@ -70,27 +73,13 @@ router.get('/get-sms/:token', (req, res) => {
                                 return res.status(404).json({ message: 'Link is invalid or has expired due to message expiry.' });
                             }
 
-                            // Mark messages as consumed and update link status
-                            db.serialize(() => {
-                                const stmt = db.prepare(`UPDATE sms_messages SET is_consumed = TRUE, consumed_by_link_id = ? WHERE content = ? AND original_timestamp = ?`);
-                                messages.forEach(msg => {
-                                    stmt.run(link.link_id, msg.content, msg.original_timestamp, (updateMsgErr) => {
-                                        if (updateMsgErr) console.error('Error marking message as consumed:', updateMsgErr.message);
-                                    });
-                                });
-                                stmt.finalize();
-
-                                db.run(`UPDATE access_links SET status = 'completed' WHERE id = ?`, [link.link_id], (updateLinkErr) => {
-                                    if (updateLinkErr) console.error('Error updating link status to completed:', updateLinkErr.message);
-                                });
-                            });
                             // 确保 original_timestamp 以 ISO 字符串格式返回
                             const formattedMessages = messages.map(msg => {
                                 const formatDbDate = (dateString) => {
                                     if (!dateString) return null;
                                     // SQLite CURRENT_TIMESTAMP 存储为 'YYYY-MM-DD HH:MM:SS' 格式，被视为本地时间。
-                                    // 为了确保 new Date() 将其解析为 UTC，我们添加 'Z'。
-                                    const date = new Date(dateString.endsWith('Z') ? dateString : dateString + 'Z');
+                                    // 让 new Date() 将其解析为本地时间。
+                                    const date = new Date(dateString);
                                     return date.toISOString();
                                 };
                                 return {
@@ -104,7 +93,9 @@ router.get('/get-sms/:token', (req, res) => {
                             const formattedMessages = messages.map(msg => {
                                 const formatDbDate = (dateString) => {
                                     if (!dateString) return null;
-                                    const date = new Date(dateString.endsWith('Z') ? dateString : dateString + 'Z');
+                                    // SQLite CURRENT_TIMESTAMP 存储为 'YYYY-MM-DD HH:MM:SS' 格式，被视为本地时间。
+                                    // 让 new Date() 将其解析为本地时间。
+                                    const date = new Date(dateString);
                                     return date.toISOString();
                                 };
                                 return {

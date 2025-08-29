@@ -25,12 +25,37 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     copyPhoneNumberBtn.addEventListener('click', async () => {
+        const textToCopy = phoneNumberSpan.innerText;
         try {
-            await navigator.clipboard.writeText(phoneNumberSpan.innerText);
-            copyPhoneNumberBtn.innerText = '已复制!';
-            setTimeout(() => {
-                copyPhoneNumberBtn.innerText = '复制';
-            }, 2000);
+            // 尝试使用 Clipboard API
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(textToCopy);
+                copyPhoneNumberBtn.innerText = '已复制!';
+                setTimeout(() => {
+                    copyPhoneNumberBtn.innerText = '复制';
+                }, 2000);
+            } else {
+                // 备用方案：使用 document.execCommand
+                const textarea = document.createElement('textarea');
+                textarea.value = textToCopy;
+                textarea.style.position = 'fixed'; // 避免滚动
+                textarea.style.opacity = '0'; // 隐藏
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                try {
+                    document.execCommand('copy');
+                    copyPhoneNumberBtn.innerText = '已复制!';
+                    setTimeout(() => {
+                        copyPhoneNumberBtn.innerText = '复制';
+                    }, 2000);
+                } catch (err) {
+                    console.error('复制失败 (execCommand):', err);
+                    alert('复制失败，请手动复制。');
+                } finally {
+                    document.body.removeChild(textarea);
+                }
+            }
         } catch (err) {
             console.error('复制失败:', err);
             alert('复制失败，请手动复制。');
@@ -53,7 +78,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (data.messages && data.messages.length > 0) {
                     messagesContainer.innerHTML = ''; // Clear loading message
-                    data.messages.forEach(msg => {
+                    let messagesToDisplay = data.messages;
+                    if (messagesToDisplay.length > 2) {
+                        messagesToDisplay = messagesToDisplay.slice(-2); // 只显示最后两条
+                    }
+                    messagesToDisplay.forEach(msg => {
                         const messageDiv = document.createElement('div');
                         messageDiv.classList.add('message-item');
                         messageDiv.innerHTML = `
@@ -62,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         `;
                         messagesContainer.appendChild(messageDiv);
                     });
-                    if (data.messages.length < 2) {
+                    if (data.messages.length < 2) { // 这里的判断仍然基于原始的data.messages长度，以决定是否继续等待
                         const waitingP = document.createElement('p');
                         waitingP.classList.add('text-center', 'text-muted', 'mt-3');
                         waitingP.innerText = '正在等待更多短信...';
@@ -91,11 +120,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (token) {
-        fetchSmsMessages();
+        fetchSmsMessages(); // Initial fetch
+        setInterval(fetchSmsMessages, 10000); // Auto-refresh every 10 seconds
     } else {
         errorMessage.classList.remove('d-none');
         errorMessage.innerText = '无效的访问链接。';
         loadingMessage.classList.add('d-none');
         phoneNumberDisplay.classList.add('d-none'); // Hide phone number on invalid link
     }
+
 });
