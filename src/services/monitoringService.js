@@ -19,6 +19,9 @@ async function monitorTargetUrl() {
     try {
         const [rows] = await dbPool.query(`SELECT config_value FROM system_configs WHERE config_key = 'targetUrl'`);
         targetUrl = rows.length > 0 ? rows[0].config_value : '';
+        if (targetUrl && !targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+            targetUrl = 'http://' + targetUrl;
+        }
         if (!targetUrl || targetUrl === 'http://example.com/sms-log') {
             console.warn('targetUrl is not configured or is default. Skipping monitoring.');
             isMonitoring = false;
@@ -32,10 +35,10 @@ async function monitorTargetUrl() {
 
     try {
         if (!browserInstance) {
-            browserInstance = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            browserInstance = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] });
             pageInstance = await browserInstance.newPage();
             console.log(`正在访问 ${targetUrl}...`);
-            await pageInstance.goto(targetUrl, { waitUntil: 'networkidle2' });
+            await pageInstance.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
             console.log(`${targetUrl} 页面已加载。`);
         }
 
