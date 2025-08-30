@@ -1,11 +1,11 @@
 const puppeteer = require('puppeteer');
-const { db } = require('../db/database');
-
 let lastKnownSmsData = []; // To store the last fetched data for comparison
 let browserInstance = null; // Global browser instance for Puppeteer
 let pageInstance = null; // Global page instance for Puppeteer
 let isMonitoring = false; // Flag to prevent multiple monitoring runs
 const refreshInterval = 10000; // 抓取间隔，单位毫秒 (例如：5000毫秒 = 5秒)
+
+let dbPool; // To store the database pool passed from server.js
 
 // Data monitoring logic
 async function monitorTargetUrl() {
@@ -17,13 +17,8 @@ async function monitorTargetUrl() {
 
     let targetUrl = '';
     try {
-        const configRow = await new Promise((resolve, reject) => {
-            db.get(`SELECT config_value FROM system_configs WHERE config_key = 'targetUrl'`, [], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        targetUrl = configRow ? configRow.config_value : '';
+        const [rows] = await dbPool.query(`SELECT config_value FROM system_configs WHERE config_key = 'targetUrl'`);
+        targetUrl = rows.length > 0 ? rows[0].config_value : '';
         if (!targetUrl || targetUrl === 'http://example.com/sms-log') {
             console.warn('targetUrl is not configured or is default. Skipping monitoring.');
             isMonitoring = false;
@@ -70,18 +65,19 @@ async function monitorTargetUrl() {
                     // Assuming row format: [ID, 时间, COM端口号, 接收号码, 发送号码, 内容]
                     const [external_id, original_timestamp_str, com_port_num, receiver_number, sender_number, content] = row;
                     const com_port = `COM${com_port_num}`; // Convert '5' to 'COM5'
-                    const original_timestamp = new Date(original_timestamp_str).toISOString(); // Ensure valid date format
+                    // Convert to MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'
+                    const dateObj = new Date(original_timestamp_str);
+                    const original_timestamp = dateObj.toISOString().slice(0, 19).replace('T', ' ');
 
-                    db.run(`INSERT INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
-                        [external_id, com_port, sender_number, receiver_number, content, original_timestamp],
-                        function (err) {
-                            if (err) {
-                                console.error('Error inserting new SMS message:', err.message);
-                            } else {
-                                console.log(`新短信插入成功，ID: ${this.lastID}`);
-                            }
-                        }
-                    );
+                    try {
+                        const [result] = await dbPool.execute(
+                            `INSERT INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+                            [external_id, com_port, sender_number, receiver_number, content, original_timestamp]
+                        );
+                        console.log(`新短信插入成功，ID: ${result.insertId}`);
+                    } catch (err) {
+                        console.error('Error inserting new SMS message:', err.message);
+                    }
                 }
                 lastKnownSmsData = currentData; // Update last known data
             } else {
@@ -104,7 +100,8 @@ async function monitorTargetUrl() {
     }
 }
 
-function startMonitoring() {
+function startMonitoring(pool) {
+    dbPool = pool; // Store the initialized pool
     // Run immediately on startup
     monitorTargetUrl();
     // Schedule to run every refreshInterval milliseconds

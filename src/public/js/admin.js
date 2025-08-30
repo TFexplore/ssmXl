@@ -18,10 +18,19 @@ document.addEventListener('DOMContentLoaded', () => {
     const importMappingsBtn = document.getElementById('importMappingsBtn'); // This is the button to open the modal
     const confirmImportMappingsBtn = document.getElementById('confirmImportMappingsBtn'); // This is the button inside the modal
     const mappingsMessage = document.getElementById('mappingsMessage');
-    const importMappingsModal = new bootstrap.Modal(document.getElementById('importMappingsModal'));
+    const importMappingsModalElement = document.getElementById('importMappingsModal');
+    const importMappingsModal = new bootstrap.Modal(importMappingsModalElement);
+
+    // Event listener to clear the textarea when the import mappings modal is shown
+    importMappingsModalElement.addEventListener('shown.bs.modal', () => {
+        mappingsInput.value = ''; // Clear the textarea
+        mappingsMessage.innerHTML = ''; // Clear any previous messages
+    });
 
     const generateLinkBtn = document.getElementById('generateLinkBtn');
-    const linkOutput = document.getElementById('linkOutput');
+    const generateShortLinkBtn = document.getElementById('generateShortLinkBtn');
+    const linkQuantityInput = document.getElementById('linkQuantityInput');
+    const linkOutputContainer = document.getElementById('linkOutputContainer');
     const linkMessage = document.getElementById('linkMessage');
 
     const deleteAllDataBtn = document.getElementById('deleteAllDataBtn');
@@ -37,10 +46,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const selectAllMappingsCheckbox = document.getElementById('selectAllMappings');
     const resetSelectedCooldownBtn = document.getElementById('resetSelectedCooldownBtn');
 
-    const itemsPerPage = 10; // 每页显示10条数据
+    const itemsPerPage = 30; // 每页显示10条数据
     let currentPage = 1;
     let totalMappings = 0;
-    let availableMappings = 0;
+    let availableMappings = 0; // This will store the count of available phone numbers
     let selectedMappingIds = new Set(); // Store selected mapping IDs
 
     // Function to get the auth token
@@ -163,19 +172,18 @@ document.addEventListener('DOMContentLoaded', () => {
             row.insertCell().innerText = mapping.com_port;
             row.insertCell().innerText = mapping.phone_number ? '****' + mapping.phone_number.slice(-4) : '';
             row.insertCell().innerText = formatDateToLocal(mapping.created_at);
-            const lastLinkedAtDate = mapping.last_linked_at ? new Date(mapping.last_linked_at) : null;
+            const cooldownUntilDate = mapping.cooldown_until ? new Date(mapping.cooldown_until) : null;
             const now = new Date();
             let cooldownText = '可用';
-            if (lastLinkedAtDate && !isNaN(lastLinkedAtDate)) {
-                const timeElapsedHours = (now.getTime() - lastLinkedAtDate.getTime()) / (1000 * 60 * 60);
-                if (timeElapsedHours < globalCooldownPeriod) {
-                    const remainingHours = globalCooldownPeriod - timeElapsedHours;
-                    const remainingMinutes = Math.ceil(remainingHours * 60);
-                    if (remainingMinutes > 60) {
-                        cooldownText = `冷却中 (${Math.ceil(remainingHours)} 小时)`;
-                    } else {
-                        cooldownText = `冷却中 (${remainingMinutes} 分钟)`;
-                    }
+            if (cooldownUntilDate && !isNaN(cooldownUntilDate) && now < cooldownUntilDate) {
+                const timeRemainingMs = cooldownUntilDate.getTime() - now.getTime();
+                const remainingHours = timeRemainingMs / (1000 * 60 * 60);
+                const remainingMinutes = Math.ceil(timeRemainingMs / (1000 * 60));
+
+                if (remainingMinutes > 60) {
+                    cooldownText = `冷却中 (${Math.ceil(remainingHours)} 小时)`;
+                } else {
+                    cooldownText = `冷却中 (${remainingMinutes} 分钟)`;
                 }
             }
             row.insertCell().innerText = cooldownText;
@@ -219,6 +227,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentPage = data.page;
 
                 mappingStats.innerText = `可用数: ${availableMappings} / 总条数: ${totalMappings}`;
+                linkQuantityInput.max = availableMappings > 0 ? availableMappings : 1; // Update max attribute
+                if (parseInt(linkQuantityInput.value) > availableMappings && availableMappings > 0) {
+                    linkQuantityInput.value = availableMappings; // Adjust current value if it exceeds new max
+                } else if (availableMappings === 0) {
+                    linkQuantityInput.value = 1; // If no available, set to 1 (min)
+                }
                 displayMappingsForPage(data.data);
                 renderPaginationControls(totalMappings, currentPage, itemsPerPage);
             } else if (response.status === 401 || response.status === 403) {
@@ -440,39 +454,64 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    generateLinkBtn.addEventListener('click', async () => {
+    async function generateLinks(isShort = false) {
         linkMessage.innerHTML = '';
-        linkOutput.value = '';
+        linkOutputContainer.innerHTML = ''; // Clear previous links
+        const quantity = parseInt(linkQuantityInput.value, 10);
+        if (isNaN(quantity) || quantity < 1) {
+            linkMessage.className = 'mt-2 alert alert-warning';
+            linkMessage.innerText = '请输入有效的生成数量。';
+            return;
+        }
+
         try {
-            const response = await fetch('/api/admin/links', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${getAuthToken()}`
+            const headers = {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${getAuthToken()}`
+            };
+
+            const generatedLinks = [];
+            let failedCount = 0;
+            let errorMessage = '';
+            const apiEndpoint = isShort ? '/api/admin/shortlinks' : '/api/admin/links';
+
+            try {
+                const response = await fetch(apiEndpoint, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ quantity }) // Pass quantity in the request body
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    const links = data.links || []; // Assuming the backend returns an array of links
+                    links.forEach(link => {
+                        const linkDiv = document.createElement('div');
+                        linkDiv.className = 'mb-1';
+                        linkDiv.innerText = link;
+                        linkOutputContainer.appendChild(linkDiv);
+                    });
+                    linkMessage.className = 'mt-2 alert alert-success';
+                    linkMessage.innerText = `成功生成 ${links.length} 个${isShort ? '短效' : ''}链接！`;
+                } else if (response.status === 401 || response.status === 403) {
+                    removeAuthToken();
+                    showAdminContent();
+                } else {
+                    throw new Error(data.message || '生成链接失败');
                 }
-            });
-            const data = await response.json();
-            if (response.ok) {
-                linkMessage.className = 'mt-2 alert alert-success';
-                linkMessage.innerText = '链接生成成功！';
-                linkOutput.value = data.link;
-            } else if (response.status === 401 || response.status === 403) {
-                removeAuthToken();
-                showAdminContent();
-            } else {
-                throw new Error(data.message || '生成链接失败');
+            } catch (error) {
+                linkMessage.className = 'mt-2 alert alert-danger';
+                linkMessage.innerText = error.message;
             }
         } catch (error) {
+            // This catch block will only be hit if there's an error before the loop starts,
+            // or if a critical error occurs that prevents even attempting to generate links.
             linkMessage.className = 'mt-2 alert alert-danger';
             linkMessage.innerText = error.message;
         }
-    });
+    }
 
-    window.copyLink = () => {
-        linkOutput.select();
-        document.execCommand('copy');
-        alert('链接已复制到剪贴板！');
-    };
+    generateLinkBtn.addEventListener('click', () => generateLinks(false));
+    generateShortLinkBtn.addEventListener('click', () => generateLinks(true));
 
     // Initial load of configs when admin page loads
     async function fetchAndDisplayConfigs() {
@@ -540,4 +579,33 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Initial check for token and display content
     showAdminContent();
+
+    // Event listener for decrease quantity button
+    decreaseQuantityBtn.addEventListener('click', () => {
+        let value = parseInt(linkQuantityInput.value);
+        if (value > 1) {
+            linkQuantityInput.value = value - 1;
+        }
+    });
+
+    // Event listener for increase quantity button
+    increaseQuantityBtn.addEventListener('click', () => {
+        let value = parseInt(linkQuantityInput.value);
+        let max = parseInt(linkQuantityInput.max);
+        if (value < max) {
+            linkQuantityInput.value = value + 1;
+        }
+    });
+
+    // Event listener for link quantity input to ensure it doesn't exceed max
+    linkQuantityInput.addEventListener('input', () => {
+        let value = parseInt(linkQuantityInput.value);
+        let max = parseInt(linkQuantityInput.max);
+        if (value > max) {
+            linkQuantityInput.value = max;
+        }
+        if (value < 1) {
+            linkQuantityInput.value = 1;
+        }
+    });
 });

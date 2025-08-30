@@ -125,12 +125,23 @@
         <div class="form-section">
             <h3>生成访问链接</h3>
             <p>系统将自动选择一个不在冷却期内的号码生成链接。</p>
-            <button id="generateLinkBtn" class="btn btn-success">生成链接</button>
+            <div class="mb-3 d-flex align-items-center">
+                <label for="linkQuantityInput" class="form-label me-2 mb-0">生成数量:</label>
+                <div class="input-group" style="width: 150px;">
+                    <button class="btn btn-outline-secondary" type="button" id="decreaseQuantityBtn">-</button>
+                    <input type="number" class="form-control text-center" id="linkQuantityInput" value="1" min="1" max="1">
+                    <button class="btn btn-outline-secondary" type="button" id="increaseQuantityBtn">+</button>
+                </div>
+                <button id="generateLinkBtn" class="btn btn-success ms-3">生成链接</button>
+                <button id="generateShortLinkBtn" class="btn btn-info ms-2">生成短效链接</button>
+            </div>
             <div id="linkMessage" class="mt-2"></div>
             <div id="generatedLink" class="mt-3">
                 <label class="form-label">生成的链接:</label>
-                <input type="text" class="form-control" id="linkOutput" readonly>
-                <button class="btn btn-secondary btn-sm mt-2" onclick="copyLink()">复制链接</button>
+                <div id="linkOutputContainer" class="border p-2 rounded bg-light" style="max-height: 200px; overflow-y: auto;">
+                    <!-- 生成的链接将显示在这里 -->
+                </div>
+                <button class="btn btn-secondary btn-sm mt-2" onclick="copyAllLinks()">复制所有链接</button>
             </div>
         </div>
     </div>
@@ -146,6 +157,26 @@
                 document.getElementById('login-container').style.display = 'block';
                 document.getElementById('admin-content').style.display = 'none';
             }
+        });
+    </script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 复制所有链接的函数
+            window.copyAllLinks = () => {
+                const linkOutputContainer = document.getElementById('linkOutputContainer');
+                const links = Array.from(linkOutputContainer.children).map(div => div.textContent.trim());
+                if (links.length > 0) {
+                    const allLinksText = links.join('\\n');
+                    navigator.clipboard.writeText(allLinksText).then(() => {
+                        alert('所有链接已复制到剪贴板！');
+                    }).catch(err => {
+                        console.error('复制失败:', err);
+                        alert('复制失败，请手动复制。');
+                    });
+                } else {
+                    alert('没有可复制的链接。');
+                }
+            };
         });
     </script>
     <script src="/js/admin.js"></script>

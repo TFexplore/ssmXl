@@ -64,7 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function fetchSmsMessages() {
         try {
-            const response = await fetch(`/get-sms/${token}`);
+            const response = await fetch(`/get-sms-short/${token}`);
             const data = await response.json();
 
             if (response.ok || response.status === 202) { // Handle 200 OK and 202 Accepted
@@ -79,9 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (data.messages && data.messages.length > 0) {
                     messagesContainer.innerHTML = ''; // Clear loading message
                     let messagesToDisplay = data.messages;
-                    if (messagesToDisplay.length > 2) {
-                        messagesToDisplay = messagesToDisplay.slice(-2); // 只显示最后两条
-                    }
+
                     messagesToDisplay.forEach(msg => {
                         const messageDiv = document.createElement('div');
                         messageDiv.classList.add('message-item');

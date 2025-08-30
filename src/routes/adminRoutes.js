@@ -1,27 +1,21 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
+const { nanoid } = require('nanoid');
 const jwt = require('jsonwebtoken');
 require('dotenv').config(); // Load environment variables
-const { db } = require('../db/database');
+const { getPool } = require('../db/database');
 const monitoringService = require('../services/monitoringService'); // 导入 monitoringService
 
 const router = express.Router();
 
 // Helper function to fetch admin secret key from DB
 async function getAdminSecretKey() {
-    return new Promise((resolve, reject) => {
-        db.get(`SELECT config_value FROM system_configs WHERE config_key = 'adminSecretKey'`, [], (err, row) => {
-            if (err) {
-                console.error('Error fetching adminSecretKey:', err.message);
-                reject(err);
-            } else if (row) {
-                resolve(row.config_value);
-            } else {
-                console.error('Admin secret key not found in database.');
-                reject(new Error('Admin secret key not found.'));
-            }
-        });
-    });
+    const pool = getPool();
+    const [rows] = await pool.query(`SELECT config_value FROM system_configs WHERE config_key = 'adminSecretKey'`);
+    if (rows.length > 0) {
+        return rows[0].config_value;
+    } else {
+        throw new Error('Admin secret key not found.');
+    }
 }
 
 // Middleware to authenticate admin requests
@@ -72,84 +66,79 @@ router.post('/login', async (req, res) => {
 router.use(authenticateAdmin);
 
 // Admin API routes
-router.post('/config', (req, res) => {
+router.post('/config', async (req, res) => {
     const { key, value } = req.body;
     if (!key || value === undefined || value === null) {
         return res.status(400).json({ message: 'Config key and value are required.' });
     }
-    db.run(`UPDATE system_configs SET config_value = ?, updated_at = CURRENT_TIMESTAMP WHERE config_key = ?`,
-        [String(value), key],
-        function (err) {
-            if (err) {
-                console.error('Error updating config:', err.message);
-                return res.status(500).json({ message: 'Failed to update config.' });
-            }
-            if (this.changes === 0) {
-                db.run(`INSERT INTO system_configs (config_key, config_value) VALUES (?, ?)`,
-                    [key, String(value)],
-                    function (err) {
-                        if (err) {
-                            console.error('Error inserting new config:', err.message);
-                            return res.status(500).json({ message: 'Failed to insert new config.' });
-                        }
-                        res.status(201).json({ message: 'Config created successfully.' });
-                    }
-                );
-            } else {
-                res.status(200).json({ message: 'Config updated successfully.' });
-            }
+    try {
+        const pool = getPool();
+        const [result] = await pool.execute(
+            `INSERT INTO system_configs (config_key, config_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE config_value = ?`,
+            [key, String(value), String(value)]
+        );
 
-            // If targetUrl is updated, reset monitoring service
-            if (key === 'targetUrl') {
-                monitoringService.resetMonitoring();
-            }
+        if (result.affectedRows > 0) {
+            res.status(200).json({ message: 'Config updated successfully.' });
+        } else {
+            res.status(201).json({ message: 'Config created successfully.' });
         }
-    );
+
+        // If targetUrl is updated, reset monitoring service
+        if (key === 'targetUrl') {
+            monitoringService.resetMonitoring();
+        }
+    } catch (err) {
+        console.error('Error updating config:', err.message);
+        return res.status(500).json({ message: 'Failed to update config.' });
+    }
 });
 
-router.get('/configs', (req, res) => {
-    db.all(`SELECT config_key, config_value FROM system_configs`, [], (err, rows) => {
-        if (err) {
-            console.error('Error fetching all configs:', err.message);
-            return res.status(500).json({ message: 'Failed to retrieve configs.' });
-        }
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Expires', '0');
+router.get('/configs', async (req, res) => {
+    try {
+        const pool = getPool();
+        const [rows] = await pool.query(`SELECT config_key, config_value FROM system_configs`);
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
         res.status(200).json(rows);
-    });
+    } catch (err) {
+        console.error('Error fetching all configs:', err.message);
+        return res.status(500).json({ message: 'Failed to retrieve configs.' });
+    }
 });
 
-router.post('/mappings/import', (req, res) => {
+router.post('/mappings/import', async (req, res) => {
     const mappings = req.body;
     if (!Array.isArray(mappings) || mappings.length === 0) {
         return res.status(400).json({ message: 'An array of mappings is required.' });
     }
 
-    const stmt = db.prepare(`INSERT OR REPLACE INTO com_phone_mappings (com_port, phone_number, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)`);
-    db.serialize(() => {
-        mappings.forEach(mapping => {
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const query = `INSERT INTO com_phone_mappings (com_port, phone_number) VALUES (?, ?) ON DUPLICATE KEY UPDATE phone_number = VALUES(phone_number)`;
+        for (const mapping of mappings) {
             if (mapping.com_port && mapping.phone_number) {
-                stmt.run(mapping.com_port, mapping.phone_number, function (err) {
-                    if (err) {
-                        console.error('Error importing mapping:', err.message);
-                    }
-                });
+                await connection.execute(query, [mapping.com_port, mapping.phone_number]);
             }
-        });
-        stmt.finalize(() => {
-            res.status(201).json({ message: 'Mappings imported successfully.' });
-        });
-    });
+        }
+        await connection.commit();
+        res.status(201).json({ message: 'Mappings imported successfully.' });
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error importing mapping:', err.message);
+        res.status(500).json({ message: 'Failed to import mappings.' });
+    } finally {
+        connection.release();
+    }
 });
 
 router.get('/mappings', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10; // 每页10条
-    const requestLimit = 20; // 同一次请求加载的数据量为20条
+    const requestLimit = 30; // 同一次请求加载的数据量为20条
     const offset = (page - 1) * limit;
 
     if (limit > requestLimit) {
@@ -157,72 +146,34 @@ router.get('/mappings', async (req, res) => {
     }
 
     let cooldownPeriod = 24; // Default to 24 hours
-    let cyclePeriod = 120; // Default to 120 hours
 
     try {
-        const configs = await new Promise((resolve, reject) => {
-            db.all(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'cyclePeriod')`, [], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        configs.forEach(config => {
-            if (config.config_key === 'cooldownPeriod') cooldownPeriod = parseInt(config.config_value, 10);
-            if (config.config_key === 'cyclePeriod') cyclePeriod = parseInt(config.config_value, 10);
-        });
+        const pool = getPool();
+        const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key = 'cooldownPeriod'`);
+        if (configs.length > 0) {
+            cooldownPeriod = parseInt(configs[0].config_value, 10);
+        }
     } catch (error) {
         console.error('Error fetching config for mappings:', error.message);
         // Use default values if fetching fails
     }
 
     try {
-        const totalCount = await new Promise((resolve, reject) => {
-            db.get(`SELECT COUNT(*) AS count FROM com_phone_mappings`, [], (err, row) => {
-                if (err) reject(err);
-                else resolve(row.count);
-            });
-        });
-
-        const availableCount = await new Promise((resolve, reject) => {
-            db.get(`SELECT COUNT(*) AS count FROM com_phone_mappings WHERE last_linked_at IS NULL OR (julianday('now') - julianday(last_linked_at)) * 24 > ?`,
-                [cooldownPeriod],
-                (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row.count);
-                }
-            );
-        });
-
-        const rows = await new Promise((resolve, reject) => {
-            db.all(`SELECT id, com_port, phone_number, last_linked_at, created_at FROM com_phone_mappings LIMIT ? OFFSET ?`,
-                [limit, offset],
-                (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows);
-                }
-            );
-        });
-
-        const formattedRows = rows.map(row => {
-            const formatDbDate = (dateString) => {
-                if (!dateString) return null;
-                const date = new Date(dateString.endsWith('Z') ? dateString : dateString + 'Z');
-                return date.toISOString();
-            };
-            return {
-                ...row,
-                last_linked_at: formatDbDate(row.last_linked_at),
-                created_at: formatDbDate(row.created_at)
-            };
-        });
+        const pool = getPool();
+        const [[{ totalCount }]] = await pool.query(`SELECT COUNT(*) AS totalCount FROM com_phone_mappings`);
+        const [[{ availableCount }]] = await pool.query(
+            `SELECT COUNT(*) AS availableCount FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until`
+        );
+        const [rows] = await pool.query(
+            `SELECT id, com_port, phone_number, cooldown_until, created_at FROM com_phone_mappings LIMIT ${limit} OFFSET ${offset}`
+        );
 
         res.status(200).json({
             total: totalCount,
             available: availableCount,
             page,
             limit,
-            data: formattedRows
+            data: rows
         });
     } catch (err) {
         console.error('Error fetching mappings with pagination:', err.message);
@@ -230,158 +181,209 @@ router.get('/mappings', async (req, res) => {
     }
 });
 
-router.post('/mappings/reset-cooldown/:id', (req, res) => {
+router.post('/mappings/reset-cooldown/:id', async (req, res) => {
     const { id } = req.params;
-    db.run(`UPDATE com_phone_mappings SET last_linked_at = NULL WHERE id = ?`, [id], function (err) {
-        if (err) {
-            console.error('Error resetting cooldown:', err.message);
-            return res.status(500).json({ message: 'Failed to reset cooldown.' });
-        }
-        if (this.changes === 0) {
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const [result] = await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NULL, cooldown_until = NULL WHERE id = ?`, [id]);
+        if (result.affectedRows === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: 'Mapping not found.' });
         }
+        await connection.execute(`DELETE FROM access_links WHERE mapping_id = ?`, [id]);
+        await connection.commit();
         res.status(200).json({ message: 'Cooldown reset successfully.' });
-    });
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error resetting cooldown:', err.message);
+        return res.status(500).json({ message: 'Failed to reset cooldown.' });
+    } finally {
+        connection.release();
+    }
 });
 
-router.post('/mappings/reset-cooldown-batch', (req, res) => {
+router.post('/mappings/reset-cooldown-batch', async (req, res) => {
     const { ids } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) {
         return res.status(400).json({ message: 'An array of mapping IDs is required.' });
     }
 
-    const placeholders = ids.map(() => '?').join(',');
-    db.run(`UPDATE com_phone_mappings SET last_linked_at = NULL WHERE id IN (${placeholders})`, ids, function (err) {
-        if (err) {
-            console.error('Error resetting cooldown for batch:', err.message);
-            return res.status(500).json({ message: 'Failed to reset cooldown for selected mappings.' });
-        }
-        if (this.changes === 0) {
+    const pool = getPool();
+    const connection = await pool.getConnection();
+    try {
+        await connection.beginTransaction();
+        const placeholders = ids.map(() => '?').join(',');
+        const [result] = await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NULL, cooldown_until = NULL WHERE id IN (${placeholders})`, ids);
+        if (result.affectedRows === 0) {
+            await connection.rollback();
             return res.status(404).json({ message: 'No mappings found for the given IDs or no changes were made.' });
         }
-        res.status(200).json({ message: `Successfully reset cooldown for ${this.changes} mappings.` });
-    });
+        await connection.execute(`DELETE FROM access_links WHERE mapping_id IN (${placeholders})`, ids);
+        await connection.commit();
+        res.status(200).json({ message: `Successfully reset cooldown for ${result.affectedRows} mappings.` });
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error resetting cooldown for batch:', err.message);
+        return res.status(500).json({ message: 'Failed to reset cooldown for selected mappings.' });
+    } finally {
+        connection.release();
+    }
 });
 
 router.post('/links', async (req, res) => {
+    const { quantity = 1 } = req.body; // Default to 1 if quantity is not provided
+    if (isNaN(quantity) || quantity < 1) {
+        return res.status(400).json({ message: 'Invalid quantity provided.' });
+    }
+
     let cooldownPeriod = 24; // Default to 24 hours
     let validityPeriod = 10; // Default to 10 minutes
-    let cyclePeriod = 120; // Default to 120 hours
 
+    const pool = getPool();
     try {
-        const configs = await new Promise((resolve, reject) => {
-            db.all(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'validityPeriod', 'cyclePeriod')`, [], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
+        const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'validityPeriod')`);
         configs.forEach(config => {
-            if (config.config_key === 'cooldownPeriod') cooldownPeriod = parseInt(config.config_value, 10);
-            if (config.config_key === 'validityPeriod') validityPeriod = parseInt(config.config_value, 10);
-            if (config.config_key === 'cyclePeriod') cyclePeriod = parseInt(config.config_value, 10);
+            if (config.config_key === 'cooldownPeriod') {
+                const parsedValue = parseInt(config.config_value, 10);
+                if (!isNaN(parsedValue)) {
+                    cooldownPeriod = parsedValue;
+                }
+            }
+            if (config.config_key === 'validityPeriod') {
+                const parsedValue = parseInt(config.config_value, 10);
+                if (!isNaN(parsedValue)) {
+                    validityPeriod = parsedValue;
+                }
+            }
         });
     } catch (error) {
         console.error('Error fetching config for link generation:', error.message);
         // Use default values if fetching fails
     }
 
-    // System automatically selects an available phone number
-    db.get(`SELECT id, com_port, phone_number FROM com_phone_mappings WHERE last_linked_at IS NULL OR (julianday('now') - julianday(last_linked_at)) * 24 > ? LIMIT 1`,
-        [cooldownPeriod],
-        (err, mapping) => {
-            if (err) {
-                console.error('Error finding available mapping:', err.message);
-                return res.status(500).json({ message: 'Failed to find an available phone number.' });
-            }
-            if (!mapping) {
-                return res.status(429).json({ message: 'No available phone numbers or all are in cooldown.' });
-            }
+    const connection = await pool.getConnection();
+    const generatedLinks = [];
+    try {
+        await connection.beginTransaction();
 
-            const token = uuidv4();
-            const expiresAt = new Date(Date.now() + validityPeriod * 60 * 1000).toISOString(); // Use configured validityPeriod
+        const [mappings] = await connection.execute(
+            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until LIMIT ${quantity} FOR UPDATE`
+        );
 
-            db.serialize(() => {
-                // 1. Delete historical messages associated with this phone number's COM port
-                db.run(`DELETE FROM sms_messages WHERE com_port = ?`, [mapping.com_port], (err) => {
-                    if (err) {
-                        console.error('Error deleting historical messages:', err.message);
-                        // Continue even if deletion fails, as it's not critical for link generation
-                    }
-                });
-
-                // 2. Insert new access link
-                db.run(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`,
-                    [token, mapping.id, expiresAt],
-                    function (err) {
-                        if (err) {
-                            console.error('Error creating access link:', err.message);
-                            return res.status(500).json({ message: 'Failed to create access link.' });
-                        }
-
-                        // 3. Update last_linked_at for the mapping
-                        db.run(`UPDATE com_phone_mappings SET last_linked_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                            [mapping.id],
-                            (err) => {
-                                if (err) {
-                                    console.error('Error updating last_linked_at:', err.message);
-                                    // This is important, but we've already created the link. Log and proceed.
-                                }
-                                // 4. Increment linkCount
-                                db.run(`UPDATE system_configs SET config_value = CAST(config_value AS INTEGER) + 1, updated_at = CURRENT_TIMESTAMP WHERE config_key = 'linkCount'`,
-                                    [],
-                                    (err) => {
-                                        if (err) {
-                                            console.error('Error incrementing linkCount:', err.message);
-                                            // Log and proceed, as link generation is complete
-                                        }
-                                        res.status(201).json({ link: `${req.protocol}://${req.get('host')}/sms-link/${token}` });
-                                    }
-                                );
-                            }
-                        );
-                    }
-                );
-            });
+        if (mappings.length === 0) {
+            await connection.rollback();
+            return res.status(429).json({ message: 'No available phone numbers or all are in cooldown.' });
         }
-    );
+
+        // If mappings.length < quantity, we proceed with available mappings, no error
+        for (const mapping of mappings) {
+            const token = nanoid(10);
+            const expiresAt = new Date(Date.now() + cooldownPeriod * 60 * 60 * 1000); // 使用 cooldownPeriod (小时) 计算链接过期时间
+        
+
+            await connection.execute(`DELETE FROM sms_messages WHERE com_port = ?`, [mapping.com_port]);
+            await connection.execute(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`, [token, mapping.id, expiresAt]);
+            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NOW(), cooldown_until = ? WHERE id = ?`, [expiresAt, mapping.id]);
+            generatedLinks.push(`${req.protocol}://${req.get('host')}/link/${token}`);
+        }
+        await connection.execute(`UPDATE system_configs SET config_value = CAST(config_value AS SIGNED) + ? WHERE config_key = 'linkCount'`, [mappings.length]);
+
+
+        await connection.commit();
+        res.status(201).json({ links: generatedLinks });
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error creating access link:', err.message);
+        return res.status(500).json({ message: 'Failed to create access link.' });
+    } finally {
+        connection.release();
+    }
+});
+router.post('/shortlinks', async (req, res) => {
+    const { quantity = 1 } = req.body; // Default to 1 if quantity is not provided
+    if (isNaN(quantity) || quantity < 1) {
+        return res.status(400).json({ message: 'Invalid quantity provided.' });
+    }
+
+    let cooldownPeriod = 24; // Default to 24 hours (although not directly used for shortlink expiry, it's fetched)
+    let validityPeriod = 15; // Default to 15 minutes
+
+    const pool = getPool();
+    try {
+        const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'validityPeriod')`);
+        configs.forEach(config => {
+            if (config.config_key === 'cooldownPeriod') {
+                const parsedValue = parseInt(config.config_value, 10);
+                if (!isNaN(parsedValue)) {
+                    cooldownPeriod = parsedValue;
+                }
+            }
+            if (config.config_key === 'validityPeriod') {
+                const parsedValue = parseInt(config.config_value, 10);
+                if (!isNaN(parsedValue)) {
+                    validityPeriod = parsedValue;
+                }
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching config for short link generation:', error.message);
+        // Use default values if fetching fails
+    }
+
+    const connection = await pool.getConnection();
+    const generatedLinks = [];
+    try {
+        await connection.beginTransaction();
+        const [mappings] = await connection.execute(
+            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until LIMIT ${quantity} FOR UPDATE`
+        );
+
+        if (mappings.length === 0) {
+            await connection.rollback();
+            return res.status(429).json({ message: 'No available phone numbers or all are in cooldown.' });
+        }
+
+        // If mappings.length < quantity, we proceed with available mappings, no error
+        for (const mapping of mappings) {
+            const token = nanoid(10);
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 使用 validityPeriod (分钟) 计算链接过期时间
+          
+            await connection.execute(`DELETE FROM sms_messages WHERE com_port = ?`, [mapping.com_port]);
+            await connection.execute(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`, [token, mapping.id, expiresAt]);
+            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NOW(), cooldown_until = ? WHERE id = ?`, [expiresAt, mapping.id]);
+            generatedLinks.push(`${req.protocol}://${req.get('host')}/link/short/${token}`);
+        }
+        await connection.execute(`UPDATE system_configs SET config_value = CAST(config_value AS SIGNED) + ? WHERE config_key = 'linkCount'`, [mappings.length]);
+
+        await connection.commit();
+        res.status(201).json({ links: generatedLinks }); // Return an array of links
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error creating short access link:', err.message);
+        return res.status(500).json({ message: 'Failed to create short access link.' });
+    } finally {
+        connection.release();
+    }
 });
 
 router.post('/delete-all-data', async (req, res) => {
+    const pool = getPool(); // Get pool here
+    const connection = await pool.getConnection();
     try {
-        await new Promise((resolve, reject) => {
-            db.run(`DELETE FROM access_links`, (err) => {
-                if (err) {
-                    console.error('Error deleting access_links:', err.message);
-                    return reject(new Error('Failed to delete access links.'));
-                }
-                resolve();
-            });
-        });
-
-        await new Promise((resolve, reject) => {
-            db.run(`DELETE FROM sms_messages`, (err) => {
-                if (err) {
-                    console.error('Error deleting sms_messages:', err.message);
-                    return reject(new Error('Failed to delete SMS messages.'));
-                }
-                resolve();
-            });
-        });
-
-        await new Promise((resolve, reject) => {
-            db.run(`DELETE FROM com_phone_mappings`, (err) => {
-                if (err) {
-                    console.error('Error deleting com_phone_mappings:', err.message);
-                    return reject(new Error('Failed to delete phone number mappings.'));
-                }
-                resolve();
-            });
-        });
-
+        await connection.beginTransaction();
+        await connection.execute(`DELETE FROM access_links`);
+        await connection.execute(`DELETE FROM sms_messages`);
+        await connection.execute(`DELETE FROM com_phone_mappings`);
+        await connection.commit();
         res.status(200).json({ message: '所有数据已成功删除。' });
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    } catch (err) {
+        await connection.rollback();
+        console.error('Error deleting all data:', err.message);
+        res.status(500).json({ message: 'Failed to delete all data.' });
+    } finally {
+        connection.release();
     }
 });
 

@@ -1,12 +1,18 @@
 const app = require('./app');
-const { db, initializeDatabase } = require('./db/database');
+const { getPool, initializeDatabase } = require('./db/database');
 const { startMonitoring } = require('./services/monitoringService');
 
 const PORT = process.env.PORT || 3000;
 
 // Start the server
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    // Start monitoring after server starts
-    startMonitoring();
-});
+async function startServer() {
+    await initializeDatabase(); // Initialize database before starting the server
+    const pool = getPool(); // Get the initialized pool
+    startMonitoring(pool); // Pass the pool to startMonitoring
+
+    app.listen(PORT, () => {
+        console.log(`Server running on http://localhost:${PORT}`);
+    });
+}
+
+startServer();
