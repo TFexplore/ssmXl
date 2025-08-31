@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config(); // Load environment variables
 const { getPool } = require('../db/database');
 const monitoringService = require('../services/monitoringService'); // 导入 monitoringService
+const { getFormattedUtcDatetime, getFormattedLocalDatetime } = require('../utils/datetimeUtils'); // 导入日期时间工具方法
 
 const router = express.Router();
 
@@ -151,7 +152,10 @@ router.get('/mappings', async (req, res) => {
         const pool = getPool();
         const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key = 'cooldownPeriod'`);
         if (configs.length > 0) {
-            cooldownPeriod = parseInt(configs[0].config_value, 10);
+            const parsedValue = parseFloat(configs[0].config_value);
+            if (!isNaN(parsedValue)) {
+                cooldownPeriod = parsedValue;
+            }
         }
     } catch (error) {
         console.error('Error fetching config for mappings:', error.message);
@@ -161,8 +165,10 @@ router.get('/mappings', async (req, res) => {
     try {
         const pool = getPool();
         const [[{ totalCount }]] = await pool.query(`SELECT COUNT(*) AS totalCount FROM com_phone_mappings`);
+        const formattedNow = getFormattedUtcDatetime();
         const [[{ availableCount }]] = await pool.query(
-            `SELECT COUNT(*) AS availableCount FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until`
+            `SELECT COUNT(*) AS availableCount FROM com_phone_mappings WHERE cooldown_until IS NULL OR ? > cooldown_until`,
+            [formattedNow]
         );
         const [rows] = await pool.query(
             `SELECT id, com_port, phone_number, cooldown_until, created_at FROM com_phone_mappings LIMIT ${limit} OFFSET ${offset}`
@@ -246,13 +252,13 @@ router.post('/links', async (req, res) => {
         const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'validityPeriod')`);
         configs.forEach(config => {
             if (config.config_key === 'cooldownPeriod') {
-                const parsedValue = parseInt(config.config_value, 10);
+                const parsedValue = parseFloat(config.config_value);
                 if (!isNaN(parsedValue)) {
                     cooldownPeriod = parsedValue;
                 }
             }
             if (config.config_key === 'validityPeriod') {
-                const parsedValue = parseInt(config.config_value, 10);
+                const parsedValue = parseFloat(config.config_value);
                 if (!isNaN(parsedValue)) {
                     validityPeriod = parsedValue;
                 }
@@ -268,8 +274,10 @@ router.post('/links', async (req, res) => {
     try {
         await connection.beginTransaction();
 
+        const formattedNowForDb = getFormattedUtcDatetime();
         const [mappings] = await connection.execute(
-            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until LIMIT ${quantity} FOR UPDATE`
+            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR ? > cooldown_until LIMIT ${quantity} FOR UPDATE`,
+            [formattedNowForDb]
         );
 
         if (mappings.length === 0) {
@@ -279,13 +287,12 @@ router.post('/links', async (req, res) => {
 
         // If mappings.length < quantity, we proceed with available mappings, no error
         for (const mapping of mappings) {
-            const token = nanoid(10);
-            const expiresAt = new Date(Date.now() + cooldownPeriod * 60 * 60 * 1000); // 使用 cooldownPeriod (小时) 计算链接过期时间
-        
-
+            const token = nanoid(6)+mapping.com_port;
+            const expiresAt = getFormattedUtcDatetime(cooldownPeriod); // 使用 cooldownPeriod (小时) 计算链接过期时间
+            const formattedNow = getFormattedUtcDatetime();
             await connection.execute(`DELETE FROM sms_messages WHERE com_port = ?`, [mapping.com_port]);
             await connection.execute(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`, [token, mapping.id, expiresAt]);
-            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NOW(), cooldown_until = ? WHERE id = ?`, [expiresAt, mapping.id]);
+            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = ?, cooldown_until = ? WHERE id = ?`, [formattedNow, expiresAt, mapping.id]);
             generatedLinks.push(`${req.protocol}://${req.get('host')}/link/${token}`);
         }
         await connection.execute(`UPDATE system_configs SET config_value = CAST(config_value AS SIGNED) + ? WHERE config_key = 'linkCount'`, [mappings.length]);
@@ -307,23 +314,23 @@ router.post('/shortlinks', async (req, res) => {
         return res.status(400).json({ message: 'Invalid quantity provided.' });
     }
 
-    let cooldownPeriod = 24; // Default to 24 hours (although not directly used for shortlink expiry, it's fetched)
-    let validityPeriod = 15; // Default to 15 minutes
+    let cooldownPeriod = 24; // Default to 24 hours
+    let shortLinkExpiry = 2; // Default to 2 hours for short links
 
     const pool = getPool();
     try {
-        const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'validityPeriod')`);
+        const [configs] = await pool.query(`SELECT config_key, config_value FROM system_configs WHERE config_key IN ('cooldownPeriod', 'shortLinkExpiry')`);
         configs.forEach(config => {
             if (config.config_key === 'cooldownPeriod') {
-                const parsedValue = parseInt(config.config_value, 10);
+                const parsedValue = parseFloat(config.config_value);
                 if (!isNaN(parsedValue)) {
                     cooldownPeriod = parsedValue;
                 }
             }
-            if (config.config_key === 'validityPeriod') {
-                const parsedValue = parseInt(config.config_value, 10);
+            if (config.config_key === 'shortLinkExpiry') {
+                const parsedValue = parseFloat(config.config_value);
                 if (!isNaN(parsedValue)) {
-                    validityPeriod = parsedValue;
+                    shortLinkExpiry = parsedValue;
                 }
             }
         });
@@ -336,8 +343,10 @@ router.post('/shortlinks', async (req, res) => {
     const generatedLinks = [];
     try {
         await connection.beginTransaction();
+        const formattedNowForDb = getFormattedUtcDatetime();
         const [mappings] = await connection.execute(
-            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR NOW() > cooldown_until LIMIT ${quantity} FOR UPDATE`
+            `SELECT id, com_port, phone_number FROM com_phone_mappings WHERE cooldown_until IS NULL OR ? > cooldown_until LIMIT ${quantity} FOR UPDATE`,
+            [formattedNowForDb]
         );
 
         if (mappings.length === 0) {
@@ -347,12 +356,19 @@ router.post('/shortlinks', async (req, res) => {
 
         // If mappings.length < quantity, we proceed with available mappings, no error
         for (const mapping of mappings) {
-            const token = nanoid(10);
-            const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 使用 validityPeriod (分钟) 计算链接过期时间
-          
+            const localDatetimeString = getFormattedLocalDatetime();
+            const hours = localDatetimeString.substring(11, 13);
+            const minutes = localDatetimeString.substring(14, 16);
+            const timePart = hours + minutes;
+            const comPortNumbers = mapping.com_port.match(/\d+/g)?.join('') || ''; // 提取com_port中的所有数字并拼接
+            const token = nanoid(6) + timePart+'M' + comPortNumbers;
+            const linkExpiresAt = getFormattedUtcDatetime(shortLinkExpiry); // Use shortLinkExpiry (hours) to calculate link expiry
+            const cooldownUntil = getFormattedUtcDatetime(cooldownPeriod); // Use cooldownPeriod (hours) to calculate cooldown_until
+            const formattedNow = getFormattedUtcDatetime();
+
             await connection.execute(`DELETE FROM sms_messages WHERE com_port = ?`, [mapping.com_port]);
-            await connection.execute(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`, [token, mapping.id, expiresAt]);
-            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = NOW(), cooldown_until = ? WHERE id = ?`, [expiresAt, mapping.id]);
+            await connection.execute(`INSERT INTO access_links (token, mapping_id, expires_at) VALUES (?, ?, ?)`, [token, mapping.id, linkExpiresAt]);
+            await connection.execute(`UPDATE com_phone_mappings SET last_linked_at = ?, cooldown_until = ? WHERE id = ?`, [formattedNow, cooldownUntil, mapping.id]);
             generatedLinks.push(`${req.protocol}://${req.get('host')}/link/short/${token}`);
         }
         await connection.execute(`UPDATE system_configs SET config_value = CAST(config_value AS SIGNED) + ? WHERE config_key = 'linkCount'`, [mappings.length]);

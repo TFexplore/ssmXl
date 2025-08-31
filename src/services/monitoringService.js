@@ -67,14 +67,16 @@ async function monitorTargetUrl() {
                     const com_port = `COM${com_port_num}`; // Convert '5' to 'COM5'
                     // Convert to MySQL DATETIME format 'YYYY-MM-DD HH:MM:SS'
                     const dateObj = new Date(original_timestamp_str);
-                    const original_timestamp = dateObj.toISOString().slice(0, 19).replace('T', ' ');
+                    const original_timestamp = dateObj;
 
                     try {
                         const [result] = await dbPool.execute(
-                            `INSERT INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+                            `INSERT IGNORE INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
                             [external_id, com_port, sender_number, receiver_number, content, original_timestamp]
                         );
-                        console.log(`新短信插入成功，ID: ${result.insertId}`);
+                        if (result.affectedRows > 0) {
+                            console.log(`新短信插入成功，ID: ${result.insertId}`);
+                        }
                     } catch (err) {
                         console.error('Error inserting new SMS message:', err.message);
                     }

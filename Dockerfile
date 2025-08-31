@@ -12,16 +12,6 @@ RUN apk add --no-cache chromium nss freetype-dev harfbuzz-dev openjdk17-jre-head
 # 设置工作目录
 WORKDIR /app
 
-# 创建用于持久化SQLite数据库的目录
-RUN mkdir -p /app/data
-
-# 声明一个卷，用于持久化SQLite数据库
-VOLUME /app/data
-
-# 确保 /app/data 目录对 'node' 用户可写
-RUN chown -R node:node /app/data \
-    && chmod -R 775 /app/data
-
 # 设置 Puppeteer 可执行文件路径
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
@@ -49,4 +39,5 @@ USER node
 # 定义启动应用的命令，使用 pm2-runtime
 CMD ["pm2-runtime", "src/server.js"]
 
+#docker build -t smsxl-app .
 #docker run -p 3000:3000 -v /opt/sms:/app/data smsxl-app

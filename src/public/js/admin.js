@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const cooldownPeriodInput = document.getElementById('cooldownPeriodInput');
     const validityPeriodInput = document.getElementById('validityPeriodInput');
     const cyclePeriodInput = document.getElementById('cyclePeriodInput');
+    const shortLinkExpiryInput = document.getElementById('shortLinkExpiryInput');
     const saveConfigBtn = document.getElementById('saveConfigBtn');
     const configMessage = document.getElementById('configMessage');
     let globalCooldownPeriod = 24; // Default to 24 hours, will be updated by fetchAndDisplayConfigs
@@ -173,10 +174,11 @@ document.addEventListener('DOMContentLoaded', () => {
             row.insertCell().innerText = mapping.phone_number ? '****' + mapping.phone_number.slice(-4) : '';
             row.insertCell().innerText = formatDateToLocal(mapping.created_at);
             const cooldownUntilDate = mapping.cooldown_until ? new Date(mapping.cooldown_until) : null;
-            const now = new Date();
+            const nowUtcMs = Date.now(); // 获取当前UTC时间戳
+            console.log(nowUtcMs);
             let cooldownText = '可用';
-            if (cooldownUntilDate && !isNaN(cooldownUntilDate) && now < cooldownUntilDate) {
-                const timeRemainingMs = cooldownUntilDate.getTime() - now.getTime();
+            if (cooldownUntilDate && !isNaN(cooldownUntilDate.getTime()) && nowUtcMs < cooldownUntilDate.getTime()) {
+                const timeRemainingMs = cooldownUntilDate.getTime() - nowUtcMs;
                 const remainingHours = timeRemainingMs / (1000 * 60 * 60);
                 const remainingMinutes = Math.ceil(timeRemainingMs / (1000 * 60));
 
@@ -391,6 +393,15 @@ document.addEventListener('DOMContentLoaded', () => {
             data = await response.json();
             if (!response.ok) throw new Error(data.message || '保存号码使用周期失败');
 
+            // Save shortLinkExpiry
+            response = await fetch('/api/admin/config', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ key: 'shortLinkExpiry', value: shortLinkExpiryInput.value })
+            });
+            data = await response.json();
+            if (!response.ok) throw new Error(data.message || '保存短链时效失败');
+
             configMessage.className = 'mt-2 alert alert-success';
             configMessage.innerText = '配置保存成功！';
         } catch (error) {
@@ -533,6 +544,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         validityPeriodInput.value = config.config_value;
                     } else if (config.config_key === 'cyclePeriod') {
                         cyclePeriodInput.value = config.config_value;
+                    } else if (config.config_key === 'shortLinkExpiry') {
+                        shortLinkExpiryInput.value = config.config_value;
                     }
                 });
             } else if (response.status === 401 || response.status === 403) {

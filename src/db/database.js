@@ -36,7 +36,8 @@ async function initializeDatabase() {
             port: process.env.MYSQL_PORT,
             waitForConnections: true,
             connectionLimit: 10,
-            queueLimit: 0
+            queueLimit: 0,
+            timezone: 'Z' // Set timezone to UTC
         });
 
         // Get a connection from the main pool to create tables

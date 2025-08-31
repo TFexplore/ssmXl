@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { getPool } = require('../db/database');
+const { getFormattedUtcDatetime, getFormattedLocalDatetime } = require('../utils/datetimeUtils'); // 导入日期时间工具方法
 
 const router = express.Router();
 
@@ -30,9 +31,10 @@ router.get('/get-sms/:token', async (req, res) => {
         }
         const link = links[0];
 
-        const now = new Date();
+        const now = new Date(getFormattedUtcDatetime()); // Keep this for client-side comparison with fetched expires_at
         if (link.status !== 'active' || now > link.expires_at) {
             if (link.status === 'active') {
+                // No SQL NOW() here, expires_at is a Date object from DB
                 await pool.execute(`UPDATE access_links SET status = 'expired' WHERE id = ?`, [link.link_id]);
             }
             return res.status(404).json({ message: 'Link is invalid or has expired.' });
@@ -44,7 +46,12 @@ router.get('/get-sms/:token', async (req, res) => {
 
         configs.forEach(config => {
             if (config.config_key === 'announcement') announcement = config.config_value;
-            if (config.config_key === 'validityPeriod') validityPeriod = parseInt(config.config_value, 10);
+            if (config.config_key === 'validityPeriod') {
+                const parsedValue = parseFloat(config.config_value);
+                if (!isNaN(parsedValue)) {
+                    validityPeriod = parsedValue;
+                }
+            }
         });
 
         const [messages] = await pool.query(
@@ -54,12 +61,19 @@ router.get('/get-sms/:token', async (req, res) => {
         );
 
         if (messages.length === 2) {
-            const messageExpiryThreshold = new Date(now.getTime() - validityPeriod * 60 * 1000);
-            const allMessagesExpired = messages.every(msg => new Date(msg.created_at) < messageExpiryThreshold);
+            const localNow = getFormattedLocalDatetime();
+            const isExpiredByOriginalTimestamp = messages.some(msg => {
+                if (!msg.original_timestamp) {
+                    return false;
+                }
+                const originalTime = new Date(msg.original_timestamp);
+                const expiryTime = new Date(originalTime.getTime() + validityPeriod * 60 * 1000);
+                return new Date(localNow) > expiryTime;
+            });
 
-            if (allMessagesExpired) {
+            if (isExpiredByOriginalTimestamp) {
                 await pool.execute(`UPDATE access_links SET status = 'expired' WHERE id = ?`, [link.link_id]);
-                return res.status(404).json({ message: 'Link is invalid or has expired due to message expiry.' });
+                return res.status(404).json({ message: 'Link is invalid or has expired due to message timestamp.' });
             }
         }
 
@@ -95,10 +109,11 @@ router.get('/get-sms-short/:token', async (req, res) => {
             return res.status(404).json({ message: 'Link is invalid or has expired.' });
         }
         const link = links[0];
-
-        const now = new Date();
+        const localNow = getFormattedUtcDatetime();
+        const now = new Date(localNow); // Keep this for client-side comparison with fetched expires_at
         if (link.status !== 'active' || now > link.expires_at) {
             if (link.status === 'active') {
+                // No SQL NOW() here, expires_at is a Date object from DB
                 await pool.execute(`UPDATE access_links SET status = 'expired' WHERE id = ?`, [link.link_id]);
             }
             return res.status(404).json({ message: 'Link is invalid or has expired.' });
