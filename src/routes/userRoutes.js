@@ -5,10 +5,15 @@ const { getFormattedUtcDatetime, getFormattedLocalDatetime } = require('../utils
 
 const router = express.Router();
 
-// Route to serve the user-facing HTML page
-router.get(['/link/:token', '/link/short/:token'], (req, res) => {
-    const isShortLink = req.originalUrl.includes('/short/');
-    const fileName = isShortLink ? 'index_short.html' : 'index.html';
+// Route to serve the user-facing HTML page for regular links
+router.get('/link/:token', (req, res) => {
+    const fileName = 'index.html'; // 普通链接使用 index.html
+    res.sendFile(path.join(__dirname, '../public', fileName));
+});
+
+// Route to serve the user-facing HTML page for short links
+router.get('/link/short/:token', (req, res) => {
+    const fileName = 'index_short.html'; // 短链接使用 index_short.html
     res.sendFile(path.join(__dirname, '../public', fileName));
 });
 
@@ -142,5 +147,54 @@ router.get('/get-sms-short/:token', async (req, res) => {
         return res.status(500).json({ message: 'Internal server error.' });
     }
 });
+
+// 为迅雷API添加的代理路由
+const https = require('https');
+const { URL } = require('url');
+
+router.post('/api/proxy/', async (req, res) => { // 统一代理路由
+    const targetApi = req.query.targetApi; // 从URL查询参数中获取目标API路径
+    if (!targetApi) {
+        return res.status(400).send('缺少 targetApi 参数');
+    }
+    const targetUrl = `https://xluser-ssl.xunlei.com/${targetApi}`;
+    const url = new URL(targetUrl);
+
+    const options = {
+        hostname: url.hostname,
+        port: 443,
+        path: url.pathname,
+        method: req.method,
+        headers: {
+            ...req.headers,
+            host: url.hostname, // 必须将host头修改为目标服务器
+        }
+    };
+    // 清理值为 undefined 的头
+    Object.keys(options.headers).forEach(key => {
+        if (options.headers[key] === undefined) {
+            delete options.headers[key];
+        }
+    });
+
+
+    const proxyReq = https.request(options, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res, {
+            end: true
+        });
+    });
+
+    proxyReq.on('error', (e) => {
+        console.error(`代理请求遇到错误: ${e.message}`);
+        res.status(500).send('代理服务器出错');
+    });
+
+    if (req.body) {
+        proxyReq.write(JSON.stringify(req.body));
+    }
+    proxyReq.end();
+});
+
 
 module.exports = router;

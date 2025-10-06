@@ -2,16 +2,18 @@ version: '3.8'
 
 services:
   app:
+    container_name: smsxl_app_container # 设置容器名称
     build: .
     ports:
-      - "3000:3000"
+      - "3001:3001"
+      - "3002:3002"
     env_file:
       - .env
     volumes:
       - .:/app
       - /app/node_modules
       - smsxl-data:/app/data
-    command: npm run dev
+    command: pm2-runtime ecosystem.config.js
 
 volumes:
   smsxl-data:

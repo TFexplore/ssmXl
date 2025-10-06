@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>账号批量验证</title>
+    <link rel="stylesheet" href="css/bootstrap.min.css">
+    <style>
+        body {
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin-top: 20px;
+        }
+        textarea {
+            min-height: 200px;
+        }
+        .result-box {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 5px;
+            max-height: 300px; /* 限制结果输出框的最大高度 */
+            overflow-y: auto; /* 添加垂直滚动条 */
+        }
+        .result-success {
+            border-color: #28a745;
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .result-fail {
+            border-color: #dc3545;
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .loading-spinner {
+            display: none;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 class="mb-4">账号批量验证工具</h1>
+
+        <div class="form-group">
+            <label for="accountList">请输入账号列表 (每行一个，格式: 手机号,密码)</label>
+            <textarea class="form-control" id="accountList" rows="10" placeholder="例如:
++86 17823224725,password123
++86 12345678900,anotherpass"></textarea>
+        </div>
+
+        <button id="startValidation" class="btn btn-primary mt-3">开始验证</button>
+        <button id="pauseValidation" class="btn btn-warning mt-3" style="display: none;">暂停</button>
+        <button id="resumeValidation" class="btn btn-success mt-3" style="display: none;">继续</button>
+        <span id="validationProgressText" class="ml-3 mt-3" style="display: none;"></span>
+        <div class="loading-spinner spinner-border text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+        </div>
+        <div class="progress mt-3" style="display: none;">
+            <div id="validationProgressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+
+        <div class="row mt-4">
+            <div class="col-md-6">
+                <h2>验证成功 <button id="copySuccess" class="btn btn-sm btn-outline-success">复制</button></h2>
+                <div id="successAccounts" class="result-box result-success">
+                    <p>无</p>
+                </div>
+            </div>
+            <div class="col-md-6">
+                <h2>验证失败 <button id="copyFailed" class="btn btn-sm btn-outline-danger">复制</button></h2>
+                <div id="failedAccounts" class="result-box result-fail">
+                    <p>无</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/lib/bootstrap.bundle.min.js"></script>
+    <script type="module" src="js/verify.js"></script>
+</body>
+</html>

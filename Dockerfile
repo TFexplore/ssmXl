@@ -30,14 +30,15 @@ COPY --chown=node:node . .
 RUN chown -R node:node /app \
     && chmod -R 775 /app
 
-# 暴露应用运行的端口
-EXPOSE 3000
+# 暴露应用运行的端口 (根据 ecosystem.config.js 中的配置)
+EXPOSE 3001
+EXPOSE 3002
 
 # 切换到非root用户，提高安全性
 USER node
 
-# 定义启动应用的命令，使用 pm2-runtime
-CMD ["pm2-runtime", "src/server.js"]
+# 定义启动应用的命令，使用 pm2-runtime 和 ecosystem.config.js
+CMD ["pm2-runtime", "ecosystem.config.js"]
 
 #docker build -t smsxl-app .
 #docker run -p 3000:3000 -v /opt/sms:/app/data smsxl-app

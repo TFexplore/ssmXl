@@ -3,41 +3,40 @@ const mysql = require('mysql2/promise');
 
 let pool; // Declare pool here, it will be initialized in initializeDatabase
 
-async function initializeDatabase() {
+async function initializeDatabase(dbName) {
     let connection;
     try {
-        // Create a temporary connection pool without specifying a database
-        // This allows us to connect to the MySQL server to create the database
+        // 创建一个临时连接池，不指定数据库
+        // 这允许我们连接到MySQL服务器以创建数据库
         const tempPool = mysql.createPool({
             host: process.env.MYSQL_HOST,
             user: process.env.MYSQL_USER,
             password: process.env.MYSQL_PASSWORD,
-            port: process.env.MYSQL_PORT, // Use port from .env
+            port: process.env.MYSQL_PORT, // 使用.env中的端口
             waitForConnections: true,
-            connectionLimit: 1, // Only need one connection for initialization
+            connectionLimit: 1, // 初始化只需要一个连接
             queueLimit: 0
         });
 
         connection = await tempPool.getConnection();
         console.log('Connected to MySQL server for database initialization.');
 
-        const dbName = process.env.MYSQL_DATABASE;
-        await connection.execute(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``); // Use backticks for database name
+        await connection.execute(`CREATE DATABASE IF NOT EXISTS \`${dbName}\``); // 使用反引号作为数据库名称
         console.log(`Database '${dbName}' checked/created.`);
 
-        connection.release(); // Release the temporary connection
+        connection.release(); // 释放临时连接
 
-        // Now, create the main pool with the specified database
+        // 现在，使用指定的数据库创建主连接池
         pool = mysql.createPool({
             host: process.env.MYSQL_HOST,
             user: process.env.MYSQL_USER,
             password: process.env.MYSQL_PASSWORD,
-            database: process.env.MYSQL_DATABASE,
+            database: dbName, // 使用传入的数据库名称
             port: process.env.MYSQL_PORT,
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0,
-            timezone: 'Z' // Set timezone to UTC
+            timezone: 'Z' // 设置时区为UTC
         });
 
         // Get a connection from the main pool to create tables
