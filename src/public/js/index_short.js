@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         messageDiv.classList.add('message-item');
                         messageDiv.innerHTML = `
                             <div>${msg.content}</div>
-                            <div class="message-timestamp">${formatDateToLocal(msg.original_timestamp)}</div>
+                            <div class="message-timestamp">${msg.original_timestamp}</div>
                         `;
                         messagesContainer.appendChild(messageDiv);
                     });

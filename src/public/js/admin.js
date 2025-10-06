@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const validityPeriodInput = document.getElementById('validityPeriodInput');
     const cyclePeriodInput = document.getElementById('cyclePeriodInput');
     const shortLinkExpiryInput = document.getElementById('shortLinkExpiryInput');
+    const keywordInput = document.getElementById('keywordInput');
     const saveConfigBtn = document.getElementById('saveConfigBtn');
     const configMessage = document.getElementById('configMessage');
     let globalCooldownPeriod = 24; // Default to 24 hours, will be updated by fetchAndDisplayConfigs
@@ -402,6 +403,15 @@ document.addEventListener('DOMContentLoaded', () => {
             data = await response.json();
             if (!response.ok) throw new Error(data.message || '保存短链时效失败');
 
+            // Save keyword
+            response = await fetch('/api/admin/config', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify({ key: 'keyword', value: keywordInput.value })
+            });
+            data = await response.json();
+            if (!response.ok) throw new Error(data.message || '保存关键字失败');
+
             configMessage.className = 'mt-2 alert alert-success';
             configMessage.innerText = '配置保存成功！';
         } catch (error) {
@@ -546,6 +556,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         cyclePeriodInput.value = config.config_value;
                     } else if (config.config_key === 'shortLinkExpiry') {
                         shortLinkExpiryInput.value = config.config_value;
+                    } else if (config.config_key === 'keyword') {
+                        keywordInput.value = config.config_value;
                     }
                 });
             } else if (response.status === 401 || response.status === 403) {

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理员后台</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             background-color: #f8f9fa;
@@ -84,6 +84,10 @@
                 <label for="shortLinkExpiryInput" class="form-label">短链时效 (小时)</label>
                 <input type="number" class="form-control" id="shortLinkExpiryInput" placeholder="例如: 24" value="24">
             </div>
+            <div class="mb-3">
+                <label for="keywordInput" class="form-label">关键字 (keyword)</label>
+                <input type="text" class="form-control" id="keywordInput" placeholder="请输入关键字">
+            </div>
             <button id="saveConfigBtn" class="btn btn-primary">保存配置</button>
             <div id="configMessage" class="mt-2"></div>
         </div>
@@ -150,7 +154,7 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/js/lib/bootstrap.bundle.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const token = localStorage.getItem('adminToken');

@@ -19,6 +19,9 @@ async function monitorTargetUrl() {
     try {
         const [rows] = await dbPool.query(`SELECT config_value FROM system_configs WHERE config_key = 'targetUrl'`);
         targetUrl = rows.length > 0 ? rows[0].config_value : '';
+        if (targetUrl && !targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
+            targetUrl = 'http://' + targetUrl;
+        }
         if (!targetUrl || targetUrl === 'http://example.com/sms-log') {
             console.warn('targetUrl is not configured or is default. Skipping monitoring.');
             isMonitoring = false;
@@ -30,12 +33,21 @@ async function monitorTargetUrl() {
         return;
     }
 
+    let keyword = '';
+    try {
+        const [rows] = await dbPool.query(`SELECT config_value FROM system_configs WHERE config_key = 'keyword'`);
+        keyword = rows.length > 0 ? rows[0].config_value : '';
+    } catch (error) {
+        console.error('Error fetching keyword from config:', error.message);
+        // Continue without a keyword if fetching fails
+    }
+
     try {
         if (!browserInstance) {
-            browserInstance = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+            browserInstance = await puppeteer.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] });
             pageInstance = await browserInstance.newPage();
             console.log(`正在访问 ${targetUrl}...`);
-            await pageInstance.goto(targetUrl, { waitUntil: 'networkidle2' });
+            await pageInstance.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
             console.log(`${targetUrl} 页面已加载。`);
         }
 
@@ -69,17 +81,26 @@ async function monitorTargetUrl() {
                     const dateObj = new Date(original_timestamp_str);
                     const original_timestamp = dateObj;
 
-                    try {
-                        const [result] = await dbPool.execute(
-                            `INSERT IGNORE INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
-                            [external_id, com_port, sender_number, receiver_number, content, original_timestamp]
-                        );
-                        if (result.affectedRows > 0) {
-                            console.log(`新短信插入成功，ID: ${result.insertId}`);
+                    // --- MODIFICATION START ---
+                    // If keyword is not set, save all messages. If it is set, only save matching messages.
+                    if (!keyword || content.includes(keyword)) {
+                        try {
+                            const [result] = await dbPool.execute(
+                                `INSERT IGNORE INTO sms_messages (external_id, com_port, sender_number, receiver_number, content, original_timestamp) VALUES (?, ?, ?, ?, ?, ?)`,
+                                [external_id, com_port, sender_number, receiver_number, content, original_timestamp]
+                            );
+                            if (result.affectedRows > 0) {
+                                console.log(`新短信插入成功 (关键词: "${keyword || '无'}"), ID: ${result.insertId}`);
+                            } else {
+                                console.log(`短信已存在或插入失败 (关键词: "${keyword || '无'}"), ID: ${external_id}`);
+                            }
+                        } catch (err) {
+                            console.error(`Error inserting new SMS message (with keyword "${keyword || '无'}"):`, err.message);
                         }
-                    } catch (err) {
-                        console.error('Error inserting new SMS message:', err.message);
+                    } else {
+                        console.log(`短信内容不包含关键词 "${keyword}"，跳过保存。内容: ${content}`);
                     }
+                    // --- MODIFICATION END ---
                 }
                 lastKnownSmsData = currentData; // Update last known data
             } else {
